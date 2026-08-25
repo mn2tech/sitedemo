@@ -1,32 +1,54 @@
 import { db } from "@/lib/supabase";
-import { displayBusinessName, looksFinancialServices } from "@/lib/scrape";
+import {
+  displayBusinessName,
+  looksFinancialServices,
+  slugifyName,
+} from "@/lib/scrape";
 
 export const runtime = "nodejs";
 
 /**
- * Repair legacy audits: fix broken business names (e.g. "Fee") and
- * normalize impact away from unsupported percentage claims.
+ * Repair legacy audits: fix broken business names (e.g. "Fee" / SEO taglines),
+ * refresh pretty slugs, and normalize impact away from unsupported % claims.
  * Preserves the existing score.
  */
 export async function POST(req) {
   try {
-    const { id } = await req.json();
-    if (!id) {
-      return Response.json({ error: "Audit id required." }, { status: 400 });
+    const body = await req.json();
+    const { id, slug: slugKey } = body;
+    if (!id && !slugKey) {
+      return Response.json({ error: "Audit id or slug required." }, { status: 400 });
     }
 
     const supabase = db();
-    const { data: audit, error } = await supabase
+    let query = supabase
       .from("audits")
-      .select("id, source_url, business_name, report")
-      .eq("id", id)
-      .single();
+      .select("id, source_url, business_name, slug, report");
+    query = id ? query.eq("id", id) : query.eq("slug", slugKey);
+    const { data: audit, error } = await query.single();
     if (error || !audit) {
       return Response.json({ error: "Audit not found." }, { status: 404 });
     }
 
     const score = audit.report?.score;
     const name = displayBusinessName(audit);
+    let host = "";
+    try {
+      host = new URL(audit.source_url).hostname;
+    } catch {
+      host = "";
+    }
+    const baseSlug = slugifyName(name, host);
+    let slug = baseSlug;
+    for (let n = 2; n < 50; n++) {
+      const { data: existing } = await supabase
+        .from("audits")
+        .select("id")
+        .eq("slug", slug)
+        .maybeSingle();
+      if (!existing || existing.id === audit.id) break;
+      slug = `${baseSlug}-${n}`;
+    }
     const financial = looksFinancialServices({ ...audit, business_name: name });
 
     const issues = (audit.report?.issues || []).map((issue) => {
@@ -105,11 +127,11 @@ export async function POST(req) {
 
     const { error: upErr } = await supabase
       .from("audits")
-      .update({ business_name: name, report })
+      .update({ business_name: name, slug, report })
       .eq("id", id);
     if (upErr) throw new Error(upErr.message);
 
-    return Response.json({ ok: true, business_name: name, score });
+    return Response.json({ ok: true, business_name: name, slug, score });
   } catch (e) {
     console.error(e);
     return Response.json({ error: e.message || "Repair failed." }, { status: 500 });
