@@ -6,6 +6,7 @@ import {
   fetchSite,
   extractContent,
   businessNameFrom,
+  slugifyName,
 } from "@/lib/scrape";
 
 export const runtime = "nodejs";
@@ -232,19 +233,33 @@ ${content.text}`,
       );
     }
 
+    // Unique pretty slug: kendall-capital, kendall-capital-2, ...
+    const baseSlug = slugifyName(businessName, target.hostname);
+    let slug = baseSlug;
+    for (let n = 2; n < 50; n++) {
+      const { data: existing } = await supabase
+        .from("audits")
+        .select("id")
+        .eq("slug", slug)
+        .maybeSingle();
+      if (!existing) break;
+      slug = `${baseSlug}-${n}`;
+    }
+
     const { data: audit, error } = await supabase
       .from("audits")
       .insert({
         source_url: target.href,
         business_name: businessName,
+        slug,
         report,
         ip_hash: hash,
       })
-      .select("id")
+      .select("id, slug")
       .single();
     if (error) throw new Error(error.message);
 
-    return Response.json({ id: audit.id });
+    return Response.json({ id: audit.id, slug: audit.slug || audit.id });
   } catch (e) {
     console.error(e);
     return Response.json({ error: "Something went wrong — please try again." }, { status: 500 });

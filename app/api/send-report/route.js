@@ -44,7 +44,7 @@ export async function POST(req) {
     if (auditId) {
       const { data } = await supabase
         .from("audits")
-        .select("id, source_url, business_name, report")
+        .select("id, source_url, business_name, slug, report")
         .eq("id", auditId)
         .single();
       audit = data;
@@ -74,7 +74,7 @@ export async function POST(req) {
       .join("\n");
 
     const base = siteBase(req);
-    const auditUrl = audit ? `${base}/audit/${audit.id}` : null;
+    const auditUrl = audit ? `${base}/audit/${audit.slug || audit.id}` : null;
     const demoUrl = demo ? `${base}/demo/${demo.id}` : null;
     const greeting = name?.trim() ? `Hi ${name.trim().split(/\s+/)[0]},` : "Hi,";
 

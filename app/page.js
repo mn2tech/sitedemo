@@ -37,7 +37,7 @@ export default function Home() {
         error: "The review took too long or hit an error — please try again.",
       }));
       if (!r.ok) throw new Error(d.error || "Something went wrong.");
-      router.push(`/audit/${d.id}`);
+      router.push(`/audit/${d.slug || d.id}`);
     } catch (e) {
       setError(e.message);
       setBusy(false);

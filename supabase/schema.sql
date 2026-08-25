@@ -26,6 +26,7 @@ create table public.audits (
   created_at timestamptz not null default now(),
   source_url text not null,
   business_name text,
+  slug text,
   report jsonb not null,
   ip_hash text
 );
@@ -43,6 +44,7 @@ create table public.report_sends (
 
 create index demos_ip_idx on public.demos(ip_hash, created_at desc);
 create index audits_ip_idx on public.audits(ip_hash, created_at desc);
+create unique index audits_slug_uidx on public.audits(slug) where slug is not null;
 create index report_sends_ip_idx on public.report_sends(ip_hash, created_at desc);
 
 -- Server uses the service-role key only; lock the tables from anon access.

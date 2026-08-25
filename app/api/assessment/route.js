@@ -20,7 +20,18 @@ export async function POST(req) {
 
     const supabase = db();
     const base = siteBase(req);
-    const auditUrl = auditId ? `${base}/audit/${auditId}` : null;
+
+    let auditPath = auditId || null;
+    if (auditId) {
+      const { data: a } = await supabase
+        .from("audits")
+        .select("id, slug")
+        .eq("id", auditId)
+        .maybeSingle();
+      if (a) auditPath = a.slug || a.id;
+    }
+
+    const auditUrl = auditPath ? `${base}/audit/${auditPath}` : null;
     const demoUrl = demoId ? `${base}/demo/${demoId}` : null;
 
     await supabase.from("demo_leads").insert({

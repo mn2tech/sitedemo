@@ -1,9 +1,9 @@
 import { db } from "@/lib/supabase";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import RedesignCta from "./redesign-cta";
 import EmailReport from "@/components/email-report";
 import AssessmentOffer from "@/components/assessment-offer";
-import { displayBusinessName, looksFinancialServices } from "@/lib/scrape";
+import { displayBusinessName, looksFinancialServices, isUuid } from "@/lib/scrape";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +40,25 @@ function normalizeIssue(issue) {
 
 export default async function AuditPage({ params }) {
   const supabase = db();
-  const { data: audit } = await supabase
+  const key = params.id;
+  let query = supabase
     .from("audits")
-    .select("id, source_url, business_name, report, created_at")
-    .eq("id", params.id)
-    .single();
+    .select("id, source_url, business_name, slug, report, created_at");
+
+  if (isUuid(key)) {
+    query = query.eq("id", key);
+  } else {
+    query = query.eq("slug", key);
+  }
+
+  const { data: audit } = await query.maybeSingle();
 
   if (!audit) notFound();
+
+  // Prefer pretty URL when visiting by UUID
+  if (isUuid(key) && audit.slug && audit.slug !== key) {
+    redirect(`/audit/${audit.slug}`);
+  }
 
   const businessName = displayBusinessName(audit);
   const financial = looksFinancialServices({ ...audit, business_name: businessName });
