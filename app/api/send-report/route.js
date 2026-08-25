@@ -1,6 +1,6 @@
 import { db } from "@/lib/supabase";
 import { sendEmail, siteBase } from "@/lib/email";
-import { ipHash } from "@/lib/scrape";
+import { ipHash, displayBusinessName } from "@/lib/scrape";
 
 export const runtime = "nodejs";
 
@@ -61,7 +61,9 @@ export async function POST(req) {
       return Response.json({ error: "Report not found." }, { status: 404 });
     }
 
-    const businessName = audit?.business_name || demo?.business_name || "your business";
+    const businessName = audit
+      ? displayBusinessName(audit)
+      : demo?.business_name || "your business";
     const sourceUrl = audit?.source_url || demo?.source_url || "";
     const score = audit?.report?.score;
     const verdict = audit?.report?.verdict;
@@ -76,17 +78,17 @@ export async function POST(req) {
     const demoUrl = demo ? `${base}/demo/${demo.id}` : null;
     const greeting = name?.trim() ? `Hi ${name.trim().split(/\s+/)[0]},` : "Hi,";
 
-    const impactText =
-      impact?.growthLow != null && impact?.growthHigh != null
-        ? `\nIf you update the site, businesses in a similar spot often see about ${impact.growthLow}–${impact.growthHigh}% more ${impact.metric || "website-driven inquiries"}.\n${impact.why ? `${impact.why}\n` : ""}(That's an estimate, not a guarantee.)\n`
-        : "";
+    const outcomes = (impact?.outcomes || []).slice(0, 5);
+    const impactText = outcomes.length
+      ? `\nPotential improvements (directional — not guaranteed):\n${outcomes.map((o) => `• ${o}`).join("\n")}\n`
+      : "";
 
     const subject = `Your website review for ${businessName}${score != null ? ` — ${score}/100` : ""}`;
     const text = `${greeting}
 
 I finished the free website review you requested for ${businessName}.
 
-${score != null ? `Score: ${score}/100\n` : ""}${verdict ? `${verdict}\n` : ""}${impactText}
+${score != null ? `Current website score: ${score}/100\n` : ""}${verdict ? `${verdict}\n` : ""}${impactText}
 ${topIssues ? `Top issues I flagged:\n${topIssues}\n` : ""}
 ${auditUrl ? `Full review:\n${auditUrl}\n` : ""}${demoUrl ? `\nRedesign concept:\n${demoUrl}\n` : ""}
 If you'd like, I can walk you through this on a short call ($99 Assessment — credited toward a project if you move forward). Just reply to this email.
@@ -95,16 +97,15 @@ Michael
 NM2TECH · Olney, Maryland
 `;
 
-    // Keep HTML light and personal — heavy promo layouts get filed under Promotions
     const html = `
       <div style="font-family:Georgia,Times,serif;font-size:16px;line-height:1.6;color:#222;max-width:560px;">
         <p>${greeting}</p>
         <p>I finished the free website review you requested for <strong>${escapeHtml(businessName)}</strong>.</p>
-        ${score != null ? `<p>Score: <strong>${score}/100</strong></p>` : ""}
+        ${score != null ? `<p>Current website score: <strong>${score}/100</strong></p>` : ""}
         ${verdict ? `<p>${escapeHtml(verdict)}</p>` : ""}
         ${
-          impact?.growthLow != null && impact?.growthHigh != null
-            ? `<p>If you update the site, businesses in a similar spot often see about <strong>${impact.growthLow}–${impact.growthHigh}%</strong> more ${escapeHtml(impact.metric || "website-driven inquiries")}.${impact.why ? ` ${escapeHtml(impact.why)}` : ""} <em>(Estimate only — not a guarantee.)</em></p>`
+          outcomes.length
+            ? `<p><strong>Potential improvements</strong> (directional — not guaranteed):</p><ul>${outcomes.map((o) => `<li>${escapeHtml(o)}</li>`).join("")}</ul>`
             : ""
         }
         ${topIssues ? `<p><strong>Top issues I flagged:</strong><br/>${escapeHtml(topIssues).replace(/\n/g, "<br/>")}</p>` : ""}

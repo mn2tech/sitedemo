@@ -50,14 +50,15 @@ export default function RedesignCta({ sourceUrl, businessName }) {
     <div className="redesign-cta">
       {!busy ? (
         <>
-          <h2>Now see it fixed.</h2>
+          <h2>See {businessName} Redesigned</h2>
           <p>
-            We'll rebuild the {businessName} homepage with every issue above
-            addressed — a real, scrollable design concept built from your
-            actual content. Free, takes a couple of minutes.
+            Preview how the highest-priority recommendations could look when
+            applied to the {businessName} digital experience — a real,
+            scrollable design concept built from publicly available content.
+            Free, takes a couple of minutes.
           </p>
           <button className="btn lg" onClick={generate}>
-            See my site redesigned →
+            See {businessName} Redesigned →
           </button>
           {error && <div className="error" style={{ margin: "16px auto 0" }}>{error}</div>}
         </>

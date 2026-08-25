@@ -15,7 +15,6 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const RATE_LIMIT_PER_HOUR = 10;
 
-// Cheap technical signals the model can't infer from stripped text
 function technicalSignals(html, target) {
   const generator =
     html.match(/<meta[^>]+name=["']generator["'][^>]+content=["']([^"']*)["']/i)?.[1] || "";
@@ -37,6 +36,70 @@ function technicalSignals(html, target) {
   };
 }
 
+function normalizeReport(report) {
+  const issues = Array.isArray(report.issues) ? report.issues : [];
+  report.issues = issues.map((issue) => {
+    const severity = ["critical", "major", "minor"].includes(issue.severity)
+      ? issue.severity
+      : "minor";
+    const category = String(issue.category || "General");
+    let priority = issue.priority;
+    if (!["high", "medium", "optimization"].includes(priority)) {
+      if (severity === "critical") priority = "high";
+      else if (
+        severity === "major" &&
+        /conversion|trust|accessib|cta|lead/i.test(`${category} ${issue.title}`)
+      )
+        priority = "high";
+      else if (severity === "major") priority = "medium";
+      else priority = "optimization";
+    }
+    let seoType = issue.seoType || null;
+    if (/seo/i.test(category) && !seoType) {
+      seoType = /local|content|location|service page/i.test(
+        `${issue.title} ${issue.detail} ${issue.fix}`
+      )
+        ? "local_content"
+        : "technical";
+    }
+    return {
+      ...issue,
+      severity,
+      priority,
+      seoType,
+      businessImpact: String(
+        issue.businessImpact ||
+          issue.detail ||
+          "Improving this can strengthen the visitor experience and conversion path."
+      ).slice(0, 400),
+      complianceNote: Boolean(issue.complianceNote),
+      fix: String(issue.fix || "").slice(0, 400),
+    };
+  });
+
+  // Directional impact only — never invent percentages or ROI guarantees
+  const outcomes = Array.isArray(report.impact?.outcomes)
+    ? report.impact.outcomes.map((o) => String(o).slice(0, 160)).filter(Boolean).slice(0, 8)
+    : [
+        "Increase qualified consultation requests",
+        "Improve visitor engagement",
+        "Reduce homepage abandonment",
+        "Strengthen prospect trust",
+        "Improve local and organic search visibility",
+        "Increase CTA engagement",
+        "Move more visitors into the consultation funnel",
+      ];
+
+  report.impact = {
+    outcomes,
+    disclaimer:
+      "Potential outcomes shown here are directional and are not guaranteed. Actual results should be measured through website analytics and conversion tracking.",
+  };
+
+  if (!Array.isArray(report.working)) report.working = [];
+  return report;
+}
+
 export async function POST(req) {
   try {
     const { url } = await req.json();
@@ -52,7 +115,6 @@ export async function POST(req) {
     const supabase = db();
     const hash = ipHash(req);
 
-    // Rate limit
     const hourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await supabase
       .from("audits")
@@ -69,7 +131,10 @@ export async function POST(req) {
     const pageHtml = await fetchSite(target.href);
     if (!pageHtml) {
       return Response.json(
-        { error: "Hmm, we couldn't find that website. Please check the spelling — for example, yourbusiness.com — and try again." },
+        {
+          error:
+            "Hmm, we couldn't find that website. Please check the spelling — for example, yourbusiness.com — and try again.",
+        },
         { status: 422 }
       );
     }
@@ -77,52 +142,62 @@ export async function POST(req) {
     const content = extractContent(pageHtml);
     if (content.text.length < 200) {
       return Response.json(
-        { error: "That site doesn't have enough readable content for an automatic review (it may be image- or JavaScript-heavy). Book a free call — this one needs the human touch." },
+        {
+          error:
+            "That site doesn't have enough readable content for an automatic review (it may be image- or JavaScript-heavy). Book a free call — this one needs the human touch.",
+        },
         { status: 422 }
       );
     }
 
     const signals = technicalSignals(pageHtml, target);
+    const businessName = businessNameFrom(content.title, target.hostname);
 
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 3000,
-      system: `You are a senior web consultant reviewing a small business's website homepage. You are given scraped page content plus technical signals detected from the HTML.
+      max_tokens: 4000,
+      system: `You are a senior web consultant reviewing a business homepage for NM2TECH. You receive scraped page content plus technical signals.
 
-OUTPUT: respond with ONLY valid JSON (no markdown fences, no commentary) in exactly this shape:
+OUTPUT: ONLY valid JSON (no markdown fences) in this shape:
 {
-  "score": <integer 0-100, overall modern-web health; most dated small-business sites land 35-65>,
-  "verdict": "<one punchy sentence summarizing the site's state, addressed to the owner>",
+  "score": <integer 0-100 current website health; do not invent post-fix scores>,
+  "verdict": "<one punchy sentence to the business owner about CURRENT state>",
   "issues": [
     {
       "severity": "critical" | "major" | "minor",
-      "category": "<short label like Mobile, Design, Trust, SEO, Content, Speed, Accessibility>",
-      "title": "<short issue name, max 8 words>",
-      "detail": "<1-2 sentences: what's wrong and why it costs them customers, in plain language>",
-      "fix": "<1 sentence: the recommended upgrade>"
+      "priority": "high" | "medium" | "optimization",
+      "category": "<Mobile|Design|Trust|SEO|Content|Speed|Accessibility|Conversion>",
+      "seoType": "technical" | "local_content" | null,
+      "title": "<short issue name, max 10 words>",
+      "detail": "<1-2 sentences: what's wrong TODAY and why it matters to the business>",
+      "fix": "<recommended fix — for weak CTAs, suggest a concrete label like Schedule a Consultation>",
+      "businessImpact": "<1 sentence expected business impact AFTER the fix — no percentages, no guaranteed ROI>",
+      "complianceNote": <true if testimonials/performance claims may need compliance review — especially financial services>
     }
   ],
-  "working": ["<1-3 short bullets of things the site does well — be honest, find at least one>"],
+  "working": ["<1-3 honest strengths>"],
   "impact": {
-    "metric": "website-driven inquiries",
-    "growthLow": 15,
-    "growthHigh": 25,
-    "why": "<2-3 sentences: why a modern redesign that fixes THEIR specific issues could lift inquiries by about 15–25% — tie reasons to the issues you listed; plain language>",
-    "disclaimer": "Estimate only — not a guarantee. Actual results depend on traffic, offer, follow-up, and market."
+    "outcomes": ["<up to 7 directional outcomes, no percentages>"],
+    "disclaimer": "Potential outcomes shown here are directional and are not guaranteed. Actual results should be measured through website analytics and conversion tracking."
   }
 }
 
 RULES:
-- 4 to 8 issues, ordered most severe first. Only report what the evidence supports — never invent problems you cannot see in the content or signals.
-- Judge from evidence: missing viewport meta = not mobile-friendly (critical). Copyright year well before today's date (provided in the input) = looks abandoned; a copyright year matching the current year is CORRECT and not an issue. No meta description = SEO gap. Wall-of-text or thin content = content issue. Missing clear call-to-action in the visible text = conversion issue. font/table/flash usage = severely dated code.
-- Impact estimate: ALWAYS use growthLow 15 and growthHigh 25 (about 15–25% more website-driven inquiries). Never invent revenue dollars. Always make "why" specific to this site's issues and framed around that 15–25% band.
-- Plain language for a non-technical business owner. No jargon without a quick explanation.
-- Be direct but respectful — the tone of a trusted expert, not a salesperson trashing their site.`,
+- 4 to 8 issues, most severe first. Only report evidence-backed findings.
+- priority: high = conversion/credibility/accessibility/lead-gen; medium = SEO/metadata/structure; optimization = nice-to-have polish.
+- For SEO issues set seoType to "technical" (meta, headings, schema, a11y, performance) or "local_content" (location/service pages, educational content). Else null.
+- NEVER invent conversion percentages, ROI, AUM, rankings, traffic numbers, or fabricated testimonials.
+- NEVER present recommendations as already implemented. Score reflects CURRENT site only.
+- For financial advisory / wealth / fiduciary firms: set complianceNote true on testimonial/performance/social-proof recommendations; do not urge unverified performance claims.
+- Prefer CTA copy like "Schedule a Consultation" or "Start a Conversation" when above-the-fold CTA is missing.
+- Use the real business name "${businessName}" — never invent a short fragment like "Fee".
+- Plain language for a business owner. Direct but respectful.`,
       messages: [
         {
           role: "user",
           content: `Review this business homepage.
 
+Business name (use this): ${businessName}
 Today's date: ${new Date().toISOString().slice(0, 10)}
 URL: ${target.href}
 Page title: ${content.title}
@@ -149,30 +224,13 @@ ${content.text}`,
 
     let report;
     try {
-      report = JSON.parse(raw);
+      report = normalizeReport(JSON.parse(raw));
     } catch {
       return Response.json(
         { error: "The review hiccuped — please try again." },
         { status: 500 }
       );
     }
-
-    // Fixed packaging: always quote 15–25% more website-driven inquiries
-    const why =
-      (report.impact && typeof report.impact === "object"
-        ? String(report.impact.why || "")
-        : "") ||
-      "A clearer design, stronger trust signals, and easier ways to contact you typically help more visitors become real inquiries.";
-    report.impact = {
-      metric: "website-driven inquiries",
-      growthLow: 15,
-      growthHigh: 25,
-      why: why.slice(0, 600),
-      disclaimer:
-        "Estimate only — not a guarantee. Actual results depend on traffic, offer, follow-up, and market.",
-    };
-
-    const businessName = businessNameFrom(content.title, target.hostname);
 
     const { data: audit, error } = await supabase
       .from("audits")
